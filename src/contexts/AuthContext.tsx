@@ -1,11 +1,23 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
-import { AppRole, UserProfile, UserRole } from '@/types/transaction';
+import { dbCall } from '@/lib/db';
+import { AppRole, UserProfile } from '@/types/transaction';
+
+interface User {
+  id: string;
+  email: string;
+  full_name: string | null;
+}
+
+interface DbUser {
+  id: string;
+  email: string;
+  full_name: string | null;
+  created_at: string;
+  roles: Array<{ role: AppRole }>;
+}
 
 interface AuthContextType {
   user: User | null;
-  session: Session | null;
   profile: UserProfile | null;
   roles: AppRole[];
   loading: boolean;
@@ -22,6 +34,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const USER_STORAGE_KEY = 'cash_flow_user';
+
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
@@ -32,86 +46,76 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchUserData = async (userId: string) => {
-    const [profileRes, rolesRes] = await Promise.all([
-      supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
-      supabase.from('user_roles').select('*').eq('user_id', userId),
-    ]);
-
-    if (profileRes.data) {
-      setProfile({
-        id: profileRes.data.id,
-        email: profileRes.data.email,
-        full_name: profileRes.data.full_name,
-        created_at: profileRes.data.created_at,
+  const setUserData = (userData: DbUser | null) => {
+    if (userData) {
+      setUser({
+        id: userData.id,
+        email: userData.email,
+        full_name: userData.full_name,
       });
-    }
-
-    if (rolesRes.data) {
-      setRoles(rolesRes.data.map((r: { role: AppRole }) => r.role));
+      setProfile({
+        id: userData.id,
+        email: userData.email,
+        full_name: userData.full_name,
+        created_at: userData.created_at,
+      });
+      setRoles(userData.roles.map((r) => r.role));
+      localStorage.setItem(USER_STORAGE_KEY, userData.id);
+    } else {
+      setUser(null);
+      setProfile(null);
+      setRoles([]);
+      localStorage.removeItem(USER_STORAGE_KEY);
     }
   };
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-
-        if (session?.user) {
-          setTimeout(() => {
-            fetchUserData(session.user.id);
-          }, 0);
+    const checkSession = async () => {
+      const storedUserId = localStorage.getItem(USER_STORAGE_KEY);
+      if (storedUserId) {
+        const { data, error } = await dbCall<DbUser>('getUser', { userId: storedUserId });
+        if (data && !error) {
+          setUserData(data);
         } else {
-          setProfile(null);
-          setRoles([]);
+          localStorage.removeItem(USER_STORAGE_KEY);
         }
-        setLoading(false);
-      }
-    );
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-
-      if (session?.user) {
-        fetchUserData(session.user.id);
       }
       setLoading(false);
-    });
+    };
 
-    return () => subscription.unsubscribe();
+    checkSession();
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error as Error | null };
+    const { data, error } = await dbCall<DbUser>('login', { email, password });
+    
+    if (error) {
+      return { error: new Error(error) };
+    }
+    
+    if (data) {
+      setUserData(data);
+    }
+    
+    return { error: null };
   };
 
   const signUp = async (email: string, password: string, fullName: string) => {
-    const redirectUrl = `${window.location.origin}/`;
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: redirectUrl,
-        data: { full_name: fullName },
-      },
-    });
-    return { error: error as Error | null };
+    const { data, error } = await dbCall<DbUser>('signup', { email, password, fullName });
+    
+    if (error) {
+      return { error: new Error(error) };
+    }
+    
+    return { error: null };
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-    setProfile(null);
-    setRoles([]);
+    setUserData(null);
   };
 
   const isAdmin = roles.includes('admin');
@@ -125,7 +129,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     <AuthContext.Provider
       value={{
         user,
-        session,
         profile,
         roles,
         loading,

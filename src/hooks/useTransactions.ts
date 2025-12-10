@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { dbCall } from '@/lib/db';
 import { Transaction, TransactionType, PaymentMethod } from '@/types/transaction';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/hooks/use-toast';
@@ -38,16 +38,13 @@ export const useTransactions = () => {
     if (!user) return;
 
     setLoading(true);
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .order('date', { ascending: false });
+    const { data, error } = await dbCall<DbTransaction[]>('getTransactions', { userId: user.id });
 
     if (error) {
       toast({
         variant: 'destructive',
         title: 'Erro ao carregar transações',
-        description: error.message,
+        description: error,
       });
     } else {
       setTransactions((data || []).map(mapDbToTransaction));
@@ -62,9 +59,8 @@ export const useTransactions = () => {
   const addTransaction = useCallback(async (transaction: Omit<Transaction, 'id' | 'createdAt' | 'user_id'>) => {
     if (!user) return;
 
-    const { data, error } = await supabase
-      .from('transactions')
-      .insert({
+    const { data, error } = await dbCall<DbTransaction>('insertTransaction', {
+      data: {
         user_id: user.id,
         date: transaction.date.toISOString().split('T')[0],
         type: transaction.type,
@@ -72,42 +68,40 @@ export const useTransactions = () => {
         amount: transaction.amount,
         description: transaction.description,
         payment_method: transaction.paymentMethod,
-      })
-      .select()
-      .single();
+      },
+    });
 
     if (error) {
       toast({
         variant: 'destructive',
         title: 'Erro ao salvar transação',
-        description: error.message,
+        description: error,
       });
       return false;
     }
 
-    setTransactions((prev) => [mapDbToTransaction(data), ...prev]);
+    if (data) {
+      setTransactions((prev) => [mapDbToTransaction(data), ...prev]);
+    }
     return true;
   }, [user]);
 
   const updateTransaction = useCallback(async (id: string, transaction: Partial<Omit<Transaction, 'id' | 'createdAt' | 'user_id'>>) => {
-    const updates: Record<string, unknown> = {};
-    if (transaction.date) updates.date = transaction.date.toISOString().split('T')[0];
-    if (transaction.type) updates.type = transaction.type;
-    if (transaction.clientSupplier) updates.client_supplier = transaction.clientSupplier;
-    if (transaction.amount !== undefined) updates.amount = transaction.amount;
-    if (transaction.description !== undefined) updates.description = transaction.description;
-    if (transaction.paymentMethod) updates.payment_method = transaction.paymentMethod;
+    const data: Record<string, unknown> = {};
+    if (transaction.date) data.date = transaction.date.toISOString().split('T')[0];
+    if (transaction.type) data.type = transaction.type;
+    if (transaction.clientSupplier) data.client_supplier = transaction.clientSupplier;
+    if (transaction.amount !== undefined) data.amount = transaction.amount;
+    if (transaction.description !== undefined) data.description = transaction.description;
+    if (transaction.paymentMethod) data.payment_method = transaction.paymentMethod;
 
-    const { error } = await supabase
-      .from('transactions')
-      .update(updates)
-      .eq('id', id);
+    const { error } = await dbCall('updateTransaction', { id, data });
 
     if (error) {
       toast({
         variant: 'destructive',
         title: 'Erro ao atualizar transação',
-        description: error.message,
+        description: error,
       });
       return false;
     }
@@ -117,16 +111,13 @@ export const useTransactions = () => {
   }, [fetchTransactions]);
 
   const deleteTransaction = useCallback(async (id: string) => {
-    const { error } = await supabase
-      .from('transactions')
-      .delete()
-      .eq('id', id);
+    const { error } = await dbCall('deleteTransaction', { id });
 
     if (error) {
       toast({
         variant: 'destructive',
         title: 'Erro ao excluir transação',
-        description: error.message,
+        description: error,
       });
       return false;
     }
