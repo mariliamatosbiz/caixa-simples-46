@@ -1,4 +1,4 @@
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_URL = 'https://clgjlsrdvbliyktgijiz.supabase.co';
 
 interface DbResponse<T> {
   data?: T;
