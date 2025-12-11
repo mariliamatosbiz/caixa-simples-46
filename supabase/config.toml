@@ -1,1 +1,4 @@
-project_id = "xjdwtqimkpnuxlgucjvu"
+project_id = "clgjlsrdvbliyktgijiz"
+
+[functions.db]
+verify_jwt = false
